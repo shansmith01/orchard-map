@@ -1,0 +1,6 @@
+services:
+  dev:
+    command: pnpm dev --host 127.0.0.1 --port 5173
+    port: 5173
+    portal:
+      title: Orchard Map dev

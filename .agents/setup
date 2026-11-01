@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Orb setup: install dependencies and prepare the local D1 database.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+step() { echo "==> $1"; SECONDS=0; }
+done_step() { echo "    done in ${SECONDS}s"; }
+
+step "pnpm install"
+pnpm install --frozen-lockfile
+done_step
+
+# Seed the local D1 database only on first setup, so later runs keep local data.
+if [ ! -d .void/v3/d1 ]; then
+  step "seed local D1 database"
+  pnpm void db seed
+  done_step
+fi
