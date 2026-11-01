@@ -20,6 +20,7 @@ type Selection =
   | { kind: "row"; rowId: string }
   | { kind: "bay"; rowId: string; bayId: string }
   | { kind: "vine"; rowId: string; bayId: string; vineId: string }
+  | { kind: "vines"; vineIds: string[] } // two or more vines, from Shift-click or Shift-drag
   | null;
 type View = { scale: number; tx: number; ty: number }; // pixels per metre + pan offset
 
@@ -43,6 +44,20 @@ function find(layout: Layout, rowId: string, bayId?: string, vineId?: string) {
   const bay = bayId ? row?.bays.find((b) => b.id === bayId) : undefined;
   const vine = vineId ? bay?.vines.find((v) => v.id === vineId) : undefined;
   return { row, bay, vine };
+}
+
+const selectedVineIds = (s: Selection) => (s?.kind === "vine" ? [s.vineId] : s?.kind === "vines" ? s.vineIds : []);
+
+function vineSelection(layout: Layout, vineIds: string[]): Selection {
+  if (vineIds.length > 1) return { kind: "vines", vineIds };
+  for (const row of layout.rows)
+    for (const bay of row.bays)
+      if (bay.vines.some((v) => v.id === vineIds[0])) return { kind: "vine", rowId: row.id, bayId: bay.id, vineId: vineIds[0] };
+  return null;
+}
+
+function forEachVine(layout: Layout, fn: (vine: Vine, bay: Bay) => void) {
+  for (const row of layout.rows) for (const bay of row.bays) for (const vine of [...bay.vines]) fn(vine, bay);
 }
 
 export default function BlockEditor({ block, orchardName }: Props) {
@@ -99,6 +114,11 @@ export default function BlockEditor({ block, orchardName }: Props) {
   const deleteSelection = useCallback(() => {
     if (!selection) return;
     edit((d) => {
+      if (selection.kind === "vines") {
+        const ids = new Set(selection.vineIds);
+        forEachVine(d, (_v, bay) => (bay.vines = bay.vines.filter((v) => !ids.has(v.id))));
+        return;
+      }
       const { row, bay } = find(d, selection.rowId, "bayId" in selection ? selection.bayId : undefined);
       if (selection.kind === "vine" && bay) bay.vines = bay.vines.filter((v) => v.id !== selection.vineId);
       if (selection.kind === "bay" && row) row.bays = row.bays.filter((b) => b.id !== selection.bayId);
@@ -275,8 +295,10 @@ function Canvas({
   const drag = useRef<
     | { kind: "pan"; startX: number; startY: number; view: View; moved: boolean; onClick?: () => void }
     | { kind: "vine"; rowId: string; bayId: string; vineId: string; base: Layout; started: boolean }
+    | { kind: "box"; x0: number; y0: number }
     | null
   >(null);
+  const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
   const fit = useCallback(() => {
     const el = svgRef.current;
@@ -327,6 +349,11 @@ function Canvas({
   const startPan = (e: ReactPointerEvent, onClick?: () => void) => {
     if (!view) return;
     svgRef.current!.setPointerCapture(e.pointerId);
+    if (e.shiftKey && e.button === 0 && tool === "select") {
+      const p = toWorld(e.clientX, e.clientY);
+      drag.current = { kind: "box", x0: p.x, y0: p.y };
+      return;
+    }
     drag.current = { kind: "pan", startX: e.clientX, startY: e.clientY, view, moved: false, onClick };
   };
 
@@ -362,6 +389,11 @@ function Canvas({
       onSelect({ kind: "vine", rowId: row.id, bayId: bay.id, vineId: vine.id });
       return;
     }
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      const ids = selectedVineIds(selection);
+      onSelect(vineSelection(layout, ids.includes(vine.id) ? ids.filter((id) => id !== vine.id) : [...ids, vine.id]));
+      return;
+    }
     svgRef.current!.setPointerCapture(e.pointerId);
     onSelect({ kind: "vine", rowId: row.id, bayId: bay.id, vineId: vine.id });
     drag.current = { kind: "vine", rowId: row.id, bayId: bay.id, vineId: vine.id, base: layout, started: false };
@@ -376,6 +408,9 @@ function Canvas({
       if (!d.moved && Math.hypot(dx, dy) < 4) return;
       d.moved = true;
       setView({ ...d.view, tx: d.view.tx + dx, ty: d.view.ty + dy });
+    } else if (d.kind === "box") {
+      const p = toWorld(e.clientX, e.clientY);
+      setBox({ x0: d.x0, y0: d.y0, x1: p.x, y1: p.y });
     } else {
       if (!d.started) {
         pushHistory();
@@ -393,10 +428,25 @@ function Canvas({
     const d = drag.current;
     drag.current = null;
     if (d?.kind === "pan" && !d.moved) (d.onClick ?? (() => onSelect(null)))();
+    if (d?.kind === "box" && box) {
+      // Add every vine inside the box to the current selection.
+      const [xa, xb] = [Math.min(box.x0, box.x1), Math.max(box.x0, box.x1)];
+      const [ya, yb] = [Math.min(box.y0, box.y1), Math.max(box.y0, box.y1)];
+      const ids = new Set(selectedVineIds(selection));
+      for (const g of geo.bays)
+        for (const v of g.bay.vines) {
+          const vx = g.x + v.x * g.w;
+          const vy = g.y + v.y * g.h;
+          if (vx >= xa && vx <= xb && vy >= ya && vy <= yb) ids.add(v.id);
+        }
+      onSelect(vineSelection(layout, [...ids]));
+    }
+    setBox(null);
   };
 
   const s = view?.scale ?? 10;
   const sel = selection;
+  const selectedVines = useMemo(() => new Set(selectedVineIds(selection)), [selection]);
   const poles = useMemo(() => {
     const seen = new Map<string, { x: number; y: number }>();
     for (const b of geo.bays) {
@@ -420,7 +470,10 @@ function Canvas({
         onPointerDown={(e) => startPan(e)}
         onPointerMove={onMove}
         onPointerUp={onUp}
-        onPointerCancel={() => (drag.current = null)}
+        onPointerCancel={() => {
+          drag.current = null;
+          setBox(null);
+        }}
         onPointerLeave={() => onHover(null)}
         role="application"
         aria-label="Block layout"
@@ -480,7 +533,7 @@ function Canvas({
               bay.vines.map((v) => {
                 const cx = x + v.x * w;
                 const cy = y + v.y * h;
-                const selected = sel?.kind === "vine" && sel.vineId === v.id;
+                const selected = selectedVines.has(v.id);
                 return (
                   <g
                     key={v.id}
@@ -505,6 +558,16 @@ function Canvas({
                   </g>
                 );
               }),
+            )}
+            {box && (
+              <rect
+                className="select-box"
+                x={Math.min(box.x0, box.x1)}
+                y={Math.min(box.y0, box.y1)}
+                width={Math.abs(box.x1 - box.x0)}
+                height={Math.abs(box.y1 - box.y0)}
+                vectorEffect="non-scaling-stroke"
+              />
             )}
           </g>
         )}
@@ -573,9 +636,11 @@ function Inspector({
       <section>
         <h3>Selection</h3>
         <p className="muted">Click a row label, a bay or a vine to edit it.</p>
+        <p className="muted small">Shift-click vines, or Shift-drag a box around them, to select several at once.</p>
       </section>
     );
   }
+  if (selection.kind === "vines") return <MultiVineInspector layout={layout} vineIds={selection.vineIds} edit={edit} onSelect={onSelect} onDelete={onDelete} />;
   const { row, bay, vine } = find(
     layout,
     selection.rowId,
@@ -725,6 +790,59 @@ function Inspector({
         </button>
         <button className="danger" onClick={onDelete}>
           Delete row
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function MultiVineInspector({
+  layout,
+  vineIds,
+  edit,
+  onSelect,
+  onDelete,
+}: {
+  layout: Layout;
+  vineIds: string[];
+  edit: (fn: (d: Layout) => void) => void;
+  onSelect: (s: Selection) => void;
+  onDelete: () => void;
+}) {
+  const ids = new Set(vineIds);
+  const vines: Vine[] = [];
+  forEachVine(layout, (v) => ids.has(v.id) && vines.push(v));
+  const set = (patch: Partial<Vine>) => edit((d) => forEachVine(d, (v) => ids.has(v.id) && Object.assign(v, patch)));
+  const allSame = <K extends keyof Vine>(k: K) => (vines.every((v) => v[k] === vines[0]?.[k]) ? vines[0]?.[k] : undefined);
+  const males = vines.filter((v) => v.sex === "male").length;
+  return (
+    <section>
+      <h3>{vines.length} vines selected</h3>
+      <p className="muted">
+        {vines.length - males} female, {males} male
+      </p>
+      <div className="segmented" role="group" aria-label="Set sex for all">
+        {(["female", "male"] as const).map((sex) => (
+          <button key={sex} aria-pressed={allSame("sex") === sex} onClick={() => set({ sex })}>
+            All {sex}
+          </button>
+        ))}
+      </div>
+      <label className="field">
+        <span>Status</span>
+        <select value={allSame("status") ?? ""} onChange={(e) => set({ status: e.target.value as Vine["status"] })}>
+          {allSame("status") === undefined && <option value="">Mixed</option>}
+          {vineStatuses.map((s) => (
+            <option key={s} value={s}>
+              {STATUS_LABELS[s]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="actions">
+        <button onClick={() => onSelect(null)}>Clear selection</button>
+        <button className="danger" onClick={onDelete}>
+          Delete {vines.length} vines
         </button>
       </div>
     </section>

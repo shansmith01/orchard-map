@@ -479,3 +479,11 @@ select {
   padding: 2px 8px;
   font-size: 13px;
 }
+
+.select-box {
+  fill: rgb(242 183 5 / 0.12);
+  stroke: var(--selected);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+}
