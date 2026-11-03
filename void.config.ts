@@ -2,6 +2,16 @@
 import { defineConfig } from 'void/config';
 
 export default defineConfig({
+  cloudflare: {
+    name: 'orchard-map',
+    account_id: '9c8214e137af898d2dce17f17822d4c9',
+    d1_databases: [{
+      binding: 'DB',
+      database_name: 'orchard-map',
+      database_id: '7ce6ca6d-b4e2-4447-a81c-0f02232ccb30',
+      migrations_dir: './db/migrations',
+    }],
+  },
   "worker": {
     "compatibility_date": "2026-02-24"
   }

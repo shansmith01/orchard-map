@@ -1,15 +1,19 @@
 import { action } from "@void/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
+  alignedRowOffset,
   layoutGeometry,
   layoutStats,
   makeBay,
   makeRow,
   newId,
+  rowAlignments,
+  rowLength,
   vineStatuses,
   type Bay,
   type Layout,
   type Row,
+  type RowAlignment,
   type Vine,
 } from "../../lib/layout";
 import type { Props } from "./[id].server";
@@ -290,11 +294,15 @@ function Canvas({
   pushHistory: () => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const geo = useMemo(() => layoutGeometry(layout), [layout]);
+  const [rowPreview, setRowPreview] = useState<{ rowId: string; offsetM: number; guideY?: number; label?: string } | null>(null);
+  const geo = useMemo(() => layoutGeometry(rowPreview ? {
+    rows: layout.rows.map((r) => r.id === rowPreview.rowId ? { ...r, offsetM: rowPreview.offsetM } : r),
+  } : layout), [layout, rowPreview]);
   const [view, setView] = useState<View | null>(null);
   const drag = useRef<
     | { kind: "pan"; startX: number; startY: number; view: View; moved: boolean; onClick?: () => void }
     | { kind: "vine"; rowId: string; bayId: string; vineId: string; base: Layout; started: boolean }
+    | { kind: "row"; row: Row; startY: number; scale: number; offsetM: number }
     | { kind: "box"; x0: number; y0: number }
     | null
   >(null);
@@ -411,6 +419,38 @@ function Canvas({
     } else if (d.kind === "box") {
       const p = toWorld(e.clientX, e.clientY);
       setBox({ x0: d.x0, y0: d.y0, x1: p.x, y1: p.y });
+    } else if (d.kind === "row") {
+      if (Math.abs(e.clientY - d.startY) < 4 && !rowPreview) return;
+      const raw = Math.min(1000, Math.max(0, d.row.offsetM + (e.clientY - d.startY) / d.scale));
+      const index = layout.rows.findIndex((r) => r.id === d.row.id);
+      const length = rowLength(d.row);
+      let best: { offsetM: number; guideY: number; label: string } | undefined;
+      let distance = 8 / d.scale;
+      const consider = (offsetM: number, guideY: number, label: string) => {
+        if (offsetM < 0 || offsetM > 1000 || Math.abs(offsetM - raw) > distance) return;
+        distance = Math.abs(offsetM - raw);
+        best = { offsetM, guideY, label };
+      };
+      if (!e.altKey) {
+        for (const neighbour of [layout.rows[index - 1], layout.rows[index + 1]]) {
+          if (!neighbour) continue;
+          let boundary = neighbour.offsetM;
+          const boundaries = [boundary];
+          for (const bay of neighbour.bays) boundaries.push(boundary += bay.lengthM);
+          let ownBoundary = 0;
+          const ownBoundaries = [0];
+          for (const bay of d.row.bays) ownBoundaries.push(ownBoundary += bay.lengthM);
+          for (const target of boundaries)
+            for (const source of ownBoundaries) consider(target - source, target, "Bay boundary");
+          for (const alignment of rowAlignments) {
+            const fraction = alignment === "top" ? 0 : alignment === "centre" ? 0.5 : 1;
+            const target = neighbour.offsetM + rowLength(neighbour) * fraction;
+            consider(target - length * fraction, target, `Align ${alignment}`);
+          }
+        }
+      }
+      d.offsetM = best?.offsetM ?? Math.round(raw * 100) / 100;
+      setRowPreview({ rowId: d.row.id, offsetM: d.offsetM, ...best });
     } else {
       if (!d.started) {
         pushHistory();
@@ -427,6 +467,10 @@ function Canvas({
   const onUp = () => {
     const d = drag.current;
     drag.current = null;
+    if (d?.kind === "row" && d.offsetM !== d.row.offsetM) {
+      edit((next) => { find(next, d.row.id).row!.offsetM = d.offsetM; });
+    }
+    setRowPreview(null);
     if (d?.kind === "pan" && !d.moved) (d.onClick ?? (() => onSelect(null)))();
     if (d?.kind === "box" && box) {
       // Add every vine inside the box to the current selection.
@@ -472,7 +516,14 @@ function Canvas({
         onPointerUp={onUp}
         onPointerCancel={() => {
           drag.current = null;
+          setRowPreview(null);
           setBox(null);
+        }}
+        onLostPointerCapture={() => {
+          if (drag.current?.kind === "row") {
+            drag.current = null;
+            setRowPreview(null);
+          }
         }}
         onPointerLeave={() => onHover(null)}
         role="application"
@@ -498,6 +549,44 @@ function Canvas({
               </text>
               );
             })}
+            {tool === "select" && sel?.kind === "row" && geo.rows.filter((g) => g.row.id === sel.rowId).map(({ row, x, w }) => (
+              <g key={`handle-${row.id}`}>
+                <rect
+                  className="row-drag-handle"
+                  x={x + w / 2 - 12 / s}
+                  y={row.offsetM - 0.8 - 36 / s}
+                  width={24 / s}
+                  height={24 / s}
+                  rx={4 / s}
+                  role="slider"
+                  tabIndex={0}
+                  aria-label={`Move ${row.name} vertically`}
+                  aria-valuemin={0}
+                  aria-valuemax={1000}
+                  aria-valuenow={row.offsetM}
+                  aria-valuetext={`${row.offsetM} metres from top`}
+                  aria-orientation="vertical"
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      drag.current = null;
+                      setRowPreview(null);
+                    }
+                    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                    e.preventDefault();
+                    const delta = (e.key === "ArrowUp" ? -1 : 1) * (e.shiftKey ? 0.1 : 1);
+                    edit((d) => { find(d, row.id).row!.offsetM = Math.min(1000, Math.max(0, Math.round((row.offsetM + delta) * 100) / 100)); });
+                  }}
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return;
+                    e.stopPropagation();
+                    e.currentTarget.focus();
+                    svgRef.current!.setPointerCapture(e.pointerId);
+                    drag.current = { kind: "row", row: find(layout, row.id).row!, startY: e.clientY, scale: s, offsetM: row.offsetM };
+                  }}
+                ><title>Drag vertically · snaps to neighbours · Alt for free movement · arrow keys to nudge</title></rect>
+                <text className="row-drag-icon" x={x + w / 2} y={row.offsetM - 0.8 - 19 / s} fontSize={16 / s}>↕</text>
+              </g>
+            ))}
             {geo.bays.map(({ row, bay, x, y, w, h }, i) => {
               const bayIndex = row.bays.indexOf(bay);
               const selected =
@@ -558,6 +647,12 @@ function Canvas({
                   </g>
                 );
               }),
+            )}
+            {rowPreview?.guideY !== undefined && (
+              <g className="row-snap-guide" pointerEvents="none">
+                <line x1={-1} x2={geo.width + 1} y1={rowPreview.guideY} y2={rowPreview.guideY} vectorEffect="non-scaling-stroke" />
+                <text x={geo.width + 1.5} y={rowPreview.guideY} fontSize={12 / s}>{rowPreview.label}</text>
+              </g>
             )}
             {box && (
               <rect
@@ -744,6 +839,17 @@ function Inspector({
         <input value={row.name} maxLength={50} onChange={(e) => setRow((r) => (r.name = e.target.value))} />
       </label>
       <NumberField label="Starts at (m from top)" value={row.offsetM} onChange={(n) => setRow((r) => (r.offsetM = n))} />
+      <p className="muted small">Align once to the row on the left:</p>
+      <div className="segmented" role="group" aria-label="Align selected row">
+        {rowAlignments.map((alignment) => (
+          <button key={alignment} disabled={rowIndex === 0} onClick={() => setRow((r) => {
+            r.offsetM = alignedRowOffset(rowLength(r), layout.rows[rowIndex - 1], alignment);
+          })}>
+            {alignment === "top" ? "Top" : alignment === "centre" ? "Centre" : "Bottom"}
+          </button>
+        ))}
+      </div>
+      <p className="muted small">Select / move: drag the ↕ handle above the row. Snaps to neighbours; hold Alt for free movement. Arrow keys nudge 1 m; Shift nudges 0.1 m. Offsets stay within 0–1000 m.</p>
       <p className="muted">
         {row.bays.length} bays · {row.bays.reduce((n, b) => n + b.lengthM, 0).toFixed(1)} m long
       </p>
@@ -851,6 +957,7 @@ function MultiVineInspector({
 
 function AddRows({ layout, edit }: { layout: Layout; edit: (fn: (d: Layout) => void) => void }) {
   const [opts, setOpts] = useState({ count: 1, bays: 10, lengthM: 6, widthM: 4, vinesPerSide: 2, offsetM: 0 });
+  const [alignment, setAlignment] = useState<RowAlignment | "custom">("top");
   const set = (k: keyof typeof opts) => (n: number) => setOpts((o) => ({ ...o, [k]: n }));
   return (
     <section>
@@ -861,24 +968,34 @@ function AddRows({ layout, edit }: { layout: Layout; edit: (fn: (d: Layout) => v
         <NumberField label="Bay length (m)" value={opts.lengthM} onChange={set("lengthM")} />
         <NumberField label="Bay width (m)" value={opts.widthM} onChange={set("widthM")} />
         <NumberField label="Vines per side" step={1} value={opts.vinesPerSide} onChange={set("vinesPerSide")} />
-        <NumberField label="Start at (m)" value={opts.offsetM} onChange={set("offsetM")} />
+        {alignment === "custom" && <NumberField label="Start at (m)" value={opts.offsetM} onChange={set("offsetM")} />}
       </div>
+      <label className="field">
+        <span>Row alignment</span>
+        <select value={alignment} onChange={(e) => setAlignment(e.target.value as RowAlignment | "custom")}>
+          <option value="top">Top</option>
+          <option value="centre">Centre</option>
+          <option value="bottom">Bottom</option>
+          <option value="custom">Custom offset</option>
+        </select>
+      </label>
+      <p className="muted small">Relative to the row on the left. First row starts at 0 m unless custom. Alignment is limited to 0–1000 m from the map top.</p>
       <button
         className="primary wide"
         disabled={opts.count < 1 || opts.bays < 1 || opts.lengthM <= 0 || opts.widthM <= 0}
         onClick={() =>
           edit((d) => {
             for (let i = 0; i < Math.min(opts.count, 100); i++) {
-              d.rows.push(
-                makeRow(`Row ${d.rows.length + 1}`, opts.offsetM, Math.min(opts.bays, 200), opts.lengthM, opts.widthM, Math.min(opts.vinesPerSide, 10)),
-              );
+              const row = makeRow(`Row ${d.rows.length + 1}`, opts.offsetM, Math.min(opts.bays, 200), opts.lengthM, opts.widthM, Math.min(opts.vinesPerSide, 10));
+              if (alignment !== "custom") row.offsetM = alignedRowOffset(rowLength(row), d.rows[d.rows.length - 1], alignment);
+              d.rows.push(row);
             }
           })
         }
       >
         Add {opts.count === 1 ? "row" : `${opts.count} rows`} to the right
       </button>
-      {layout.rows.length > 0 && <p className="muted small">Then select a row to shorten it, offset its start or change bay sizes.</p>}
+      {layout.rows.length > 0 && <p className="muted small">Select a row label to realign it, drag it vertically or change bay sizes.</p>}
     </section>
   );
 }

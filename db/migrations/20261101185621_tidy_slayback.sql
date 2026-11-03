@@ -1,3 +1,4 @@
+-- void:allow-destructive
 CREATE TABLE `blocks` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`orchard_id` integer NOT NULL,

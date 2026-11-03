@@ -38,6 +38,17 @@ export type Bay = z.infer<typeof baySchema>;
 export type Row = z.infer<typeof rowSchema>;
 export type Layout = z.infer<typeof layoutSchema>;
 
+export const rowAlignments = ["top", "centre", "bottom"] as const;
+export type RowAlignment = (typeof rowAlignments)[number];
+
+export const rowLength = (row: Row) => row.bays.reduce((sum, bay) => sum + bay.lengthM, 0);
+
+// Alignment is a one-time offset, not a constraint linking two rows.
+export function alignedRowOffset(lengthM: number, neighbour: Row | undefined, alignment: RowAlignment): number {
+  if (!neighbour) return 0;
+  const fraction = alignment === "top" ? 0 : alignment === "centre" ? 0.5 : 1;
+  return Math.min(1000, Math.max(0, neighbour.offsetM + (rowLength(neighbour) - lengthM) * fraction));
+}
 
 export const newId = () => crypto.randomUUID();
 

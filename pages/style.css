@@ -288,6 +288,38 @@ select {
   fill: var(--accent);
 }
 
+.row-drag-handle {
+  fill: #fff;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  cursor: ns-resize;
+}
+
+.row-drag-handle:hover,
+.row-drag-handle:focus {
+  fill: #fff1b8;
+  outline: none;
+  stroke-width: 3;
+}
+
+.row-drag-icon {
+  fill: var(--accent);
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.row-snap-guide line {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+}
+
+.row-snap-guide text {
+  fill: var(--accent);
+  dominant-baseline: middle;
+}
+
 .vine {
   cursor: move;
 }
