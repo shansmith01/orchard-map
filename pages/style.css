@@ -519,3 +519,144 @@ select {
   stroke-dasharray: 4 3;
   pointer-events: none;
 }
+
+/* Printable map (A4 sheets) */
+
+@page {
+  size: A4 portrait;
+  margin: 0;
+}
+
+.print-view {
+  padding-bottom: 24px;
+}
+
+.print-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.print-empty {
+  text-align: center;
+  margin-top: 48px;
+}
+
+.sheet {
+  width: 210mm;
+  height: 297mm;
+  margin: 24px auto 0;
+  background: #fff;
+  box-shadow: 0 1px 6px rgb(0 0 0 / 0.18);
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+.sheet svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+}
+
+.sheet-title {
+  font-size: 4.5px;
+  font-weight: 700;
+  fill: var(--text);
+}
+
+.sheet-sub {
+  font-size: 3px;
+  fill: var(--muted);
+}
+
+.sheet-row-label {
+  fill: var(--text);
+  font-weight: 600;
+  text-anchor: middle;
+}
+
+.sheet-bay {
+  fill: var(--bay);
+  stroke: #9aa58c;
+  stroke-width: 0.15;
+}
+
+.sheet-bay.alt {
+  fill: var(--bay-alt);
+}
+
+.sheet-bay-number {
+  fill: #a3ac97;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.sheet-vine .dot {
+  stroke: #fff;
+}
+
+.sheet-vine.female .dot {
+  fill: var(--female);
+}
+
+.sheet-vine.male .dot {
+  fill: var(--male);
+}
+
+.sheet-vine.status-dead .dot {
+  opacity: 0.35;
+}
+
+.sheet-vine .psa {
+  fill: none;
+  stroke: var(--psa);
+}
+
+.sheet-vine .new {
+  fill: none;
+  stroke: var(--new);
+}
+
+.sheet-vine .dead {
+  stroke: #222;
+  stroke-linecap: round;
+}
+
+.sheet-vine .unknown {
+  fill: #222;
+  font-weight: 700;
+}
+
+.sheet-legend text {
+  font-size: 3px;
+  fill: var(--text);
+  dominant-baseline: central;
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .print-bar,
+  .print-empty {
+    display: none;
+  }
+
+  .print-view {
+    padding: 0;
+  }
+
+  .sheet {
+    margin: 0;
+    box-shadow: none;
+    break-after: page;
+  }
+}

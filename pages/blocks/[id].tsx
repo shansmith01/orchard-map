@@ -203,6 +203,13 @@ export default function BlockEditor({ block, orchardName }: Props) {
         <button onClick={undo} disabled={history.length === 0} title="Undo (Ctrl+Z)">
           Undo
         </button>
+        <button
+          onClick={() => location.assign(`/blocks/${block.id}/print`)}
+          disabled={dirty}
+          title={dirty ? "Wait for changes to save" : "Lay the map out on A4 sheets and save as PDF"}
+        >
+          PDF
+        </button>
         <span className={`save-status ${saveError || (dirty && nameMissing) ? "error" : ""}`} role="status">
           {saving
             ? "Saving…"
