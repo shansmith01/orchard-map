@@ -235,8 +235,24 @@ select {
 }
 
 .canvas.tool-female .bay,
-.canvas.tool-male .bay {
+.canvas.tool-male .bay,
+.span-hit {
   cursor: crosshair;
+}
+
+.span-hit {
+  fill: transparent;
+}
+
+.row-line {
+  stroke: #9aa58c;
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
+.row-line.selected {
+  stroke: var(--selected);
+  stroke-width: 3;
 }
 
 .canvas.tool-erase .vine {

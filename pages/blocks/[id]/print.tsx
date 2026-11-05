@@ -1,9 +1,10 @@
-import type { Bay, Layout, Row, Vine } from "../../../lib/layout";
+import { pairSpans, type Bay, type Layout, type Row, type Vine } from "../../../lib/layout";
 import type { Props } from "./print.server";
 import "../../style.css";
 
 // A4 portrait sheets, measured in millimetres. Rows run down the page like in the editor,
-// and each sheet holds up to BAYS_PER_SHEET bays of every row in its group.
+// and each sheet holds up to BAYS_PER_SHEET bays of every row in its group. Each row of
+// posts sits on the centre line of its own column, and bays are the cells between them.
 const PAGE_W = 210;
 const PAGE_H = 297;
 const MARGIN = 10;
@@ -20,7 +21,6 @@ type Column = { row: Row; rowIndex: number; firstBay: number; bays: Bay[]; start
 type Sheet = { columns: Column[]; firstBay: number; lastBay: number; startM: number };
 
 function paginate(layout: Layout) {
-  const rowWidthM = (r: Row) => Math.max(1, ...r.bays.map((b) => b.widthM));
   const chunkCount = Math.ceil(Math.max(0, ...layout.rows.map((r) => r.bays.length)) / BAYS_PER_SHEET);
   const columnFor = (row: Row, rowIndex: number, firstBay: number): Column => ({
     row,
@@ -42,21 +42,14 @@ function paginate(layout: Layout) {
   for (let c = 0; c < chunkCount; c++)
     longestM = Math.max(longestM, span(layout.rows.map((r, i) => columnFor(r, i, c * BAYS_PER_SHEET))).lengthM);
   const yScale = MAP_H / longestM;
-  const maxWidthM = Math.max(1, ...layout.rows.map(rowWidthM));
-  const xScale = Math.max(yScale, MIN_ROW_MM / maxWidthM);
+  const xScale = Math.max(yScale, MIN_ROW_MM / layout.rowSpacingM);
 
-  // Fill each sheet with as many rows as fit across it.
+  // Fill each sheet with as many rows as fit across it. Each sheet after the first repeats
+  // the previous sheet's last row, so the bays between those two rows are printed too.
+  const rows = layout.rows.map((row, rowIndex) => ({ row, rowIndex }));
+  const perSheet = Math.max(2, Math.floor(MAP_W / (layout.rowSpacingM * xScale) + 1e-6));
   const groups: { row: Row; rowIndex: number }[][] = [];
-  let usedMm = Infinity;
-  layout.rows.forEach((row, rowIndex) => {
-    const w = rowWidthM(row) * xScale;
-    if (usedMm + w > MAP_W + 1e-6) {
-      groups.push([]);
-      usedMm = 0;
-    }
-    groups[groups.length - 1].push({ row, rowIndex });
-    usedMm += w;
-  });
+  for (let start = 0; start === 0 || start < rows.length - 1; start += perSheet - 1) groups.push(rows.slice(start, start + perSheet));
 
   const sheets: Sheet[] = [];
   for (const group of groups) {
@@ -67,12 +60,12 @@ function paginate(layout: Layout) {
       sheets.push({ columns, firstBay: c * BAYS_PER_SHEET, lastBay, startM });
     }
   }
-  return { sheets, xScale, yScale, rowWidthM };
+  return { sheets, xScale, yScale };
 }
 
 export default function PrintBlock({ block, orchardName }: Props) {
   const layout = block.layout;
-  const { sheets, xScale, yScale, rowWidthM } = paginate(layout);
+  const { sheets, xScale, yScale } = paginate(layout);
   const printedOn = new Date().toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" });
 
   return (
@@ -94,7 +87,6 @@ export default function PrintBlock({ block, orchardName }: Props) {
       {sheets.length === 0 && <p className="print-empty muted">This block has no bays yet.</p>}
 
       {sheets.map((sheet, i) => {
-        let x = MARGIN;
         const rows = sheet.columns.map((c) => c.row.name || `Row ${c.rowIndex + 1}`);
         const rowRange = rows.length > 1 ? `${rows[0]} – ${rows[rows.length - 1]}` : rows[0];
         return (
@@ -113,34 +105,43 @@ export default function PrintBlock({ block, orchardName }: Props) {
                 Printed {printedOn}
               </text>
 
-              {sheet.columns.map((col, c) => {
-                const w = rowWidthM(col.row) * xScale;
-                const x0 = x;
-                x += w;
-                const label = rows[c];
-                let y = MAP_TOP + (col.startM - sheet.startM) * yScale;
+              {(() => {
+                const w = layout.rowSpacingM * xScale;
+                const columns = sheet.columns.map((col, c) => {
+                  let y = col.startM;
+                  const spans = col.bays.map((bay, b) => {
+                    const span = { bay, index: col.firstBay + b, y, h: bay.lengthM };
+                    y += bay.lengthM;
+                    return span;
+                  });
+                  return { col, lineX: MARGIN + (c + 0.5) * w, spans };
+                });
+                const toY = (m: number) => MAP_TOP + (m - sheet.startM) * yScale;
                 return (
-                  <g key={col.row.id}>
-                    <text
-                      className="sheet-row-label"
-                      x={x0 + w / 2}
-                      y={MAP_TOP - 2}
-                      fontSize={Math.min(2.8, (w * 0.9) / (label.length * 0.7))}
-                    >
-                      {label}
-                    </text>
-                    {col.bays.map((bay, b) => {
-                      const bw = bay.widthM * xScale;
-                      const bh = bay.lengthM * yScale;
-                      const by = y;
-                      y += bh;
-                      return (
-                        <PrintBay key={bay.id} bay={bay} number={col.firstBay + b + 1} x={x0} y={by} w={bw} h={bh} alt={(col.firstBay + b) % 2 === 1} />
-                      );
-                    })}
-                  </g>
+                  <>
+                    {columns.slice(1).map((right, c) =>
+                      pairSpans(columns[c].spans, right.spans).map(([l]) => (
+                        <PrintCell key={l.bay.id} number={l.index + 1} x={columns[c].lineX} y={toY(l.y)} w={w} h={l.h * yScale} alt={l.index % 2 === 1} />
+                      )),
+                    )}
+                    {columns.map(({ col, lineX, spans }, c) => (
+                      <g key={col.row.id}>
+                        <text
+                          className="sheet-row-label"
+                          x={lineX}
+                          y={MAP_TOP - 2}
+                          fontSize={Math.min(2.8, (w * 0.9) / (rows[c].length * 0.7))}
+                        >
+                          {rows[c]}
+                        </text>
+                        {spans.map((span) => (
+                          <PrintSpan key={span.bay.id} bay={span.bay} x={lineX} y={toY(span.y)} h={span.h * yScale} w={w} />
+                        ))}
+                      </g>
+                    ))}
+                  </>
                 );
-              })}
+              })()}
 
               <PrintLegend y={PAGE_H - MARGIN - 3} />
             </svg>
@@ -151,25 +152,28 @@ export default function PrintBlock({ block, orchardName }: Props) {
   );
 }
 
-function PrintBay({ bay, number, x, y, w, h, alt }: { bay: Bay; number: number; x: number; y: number; w: number; h: number; alt: boolean }) {
-  const r = Math.min(1, w * 0.12, h * 0.16);
-  const pole = Math.min(0.7, h * 0.12);
+function PrintCell({ number, x, y, w, h, alt }: { number: number; x: number; y: number; w: number; h: number; alt: boolean }) {
   return (
     <g>
       <rect className={`sheet-bay ${alt ? "alt" : ""}`} x={x} y={y} width={w} height={h} />
       <text className="sheet-bay-number" x={x + w / 2} y={y + h / 2} fontSize={Math.min(2, h * 0.4, w * 0.3)}>
         {number}
       </text>
-      {[
-        [x, y],
-        [x + w, y],
-        [x, y + h],
-        [x + w, y + h],
-      ].map(([px, py], i) => (
-        <rect key={i} className="pole" x={px - pole / 2} y={py - pole / 2} width={pole} height={pole} />
+    </g>
+  );
+}
+
+// One row's posts and vines between two neighbouring posts; x is the row's line.
+function PrintSpan({ bay, x, y, w, h }: { bay: Bay; x: number; y: number; w: number; h: number }) {
+  const r = Math.min(1, w * 0.12, h * 0.16);
+  const pole = Math.min(0.7, h * 0.12);
+  return (
+    <g>
+      {[y, y + h].map((py, i) => (
+        <rect key={i} className="pole" x={x - pole / 2} y={py - pole / 2} width={pole} height={pole} />
       ))}
       {bay.vines.map((v) => (
-        <PrintVine key={v.id} vine={v} cx={x + v.x * w} cy={y + v.y * h} r={r} />
+        <PrintVine key={v.id} vine={v} cx={x} cy={y + v.y * h} r={r} />
       ))}
     </g>
   );

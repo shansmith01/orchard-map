@@ -15,19 +15,19 @@ function sampleLayout(): Layout {
     { offsetM: 24, bays: 6 },
     { offsetM: 24, bays: 7 },
   ];
-  const rows = shape.map((s, i) => makeRow(`Row ${i + 1}`, s.offsetM, s.bays, 6, 4, 2));
+  const rows = shape.map((s, i) => makeRow(`Row ${i + 1}`, s.offsetM, s.bays, 6, 2));
   rows.forEach((row, r) =>
     row.bays.forEach((bay, b) => {
-      // A male on alternating sides every third bay.
-      if ((b + r) % 3 === 0) bay.vines[(b % 2) * 2].sex = "male";
+      // A male every third bay, alternating which of the bay's two vines.
+      if ((b + r) % 3 === 0) bay.vines[b % 2].sex = "male";
     }),
   );
   rows[3].bays[2].vines[1].status = "psa";
   rows[3].bays[2].vines[1].note = "PSA – cut back";
-  rows[4].bays[0].vines[3].status = "dead";
+  rows[4].bays[0].vines[1].status = "dead";
   rows[5].bays[1].vines[0].status = "new";
-  rows[6].bays[3].vines[2].status = "unknown";
-  return { rows };
+  rows[6].bays[3].vines[0].status = "unknown";
+  return { rowSpacingM: 4, rows };
 }
 
 export default defineSeed<typeof import("./schema")>(async ({ db, schema }) => {

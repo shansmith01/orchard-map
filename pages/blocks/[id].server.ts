@@ -1,7 +1,7 @@
 import { defineHandler, type InferProps } from "void";
 import { db, eq, sql } from "void/db";
 import { blocks, orchards } from "@schema";
-import { layoutSchema } from "../../lib/layout";
+import { layoutSchema, migrateLayout } from "../../lib/layout";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 
@@ -14,7 +14,7 @@ export const loader = defineHandler(async (c) => {
     .innerJoin(orchards, eq(orchards.id, blocks.orchardId))
     .where(eq(blocks.id, Number(c.req.param("id"))));
   if (!row) throw new HTTPException(404, { message: "Block not found" });
-  return { block: row.block, orchardName: row.orchardName };
+  return { block: { ...row.block, layout: migrateLayout(row.block.layout) }, orchardName: row.orchardName };
 });
 
 export const action = defineHandler.withValidator({

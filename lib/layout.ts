@@ -1,8 +1,9 @@
 import { z } from "zod";
 
-// A bay is the space between four poles. Vines sit inside it at fractional
-// positions: x runs across the row (0 = left side, 1 = right side) and
-// y runs along the row (0 = start of the bay, 1 = end).
+// A row is a line of posts, rowSpacingM from the next across the whole block. Its `bays` are
+// the spans between neighbouring posts along it, and each span's vines are planted on the row
+// between those posts at y (0 = first post, 1 = second). What a grower calls a bay is the cell
+// between two neighbouring rows, a post on each corner; layoutGeometry derives those.
 export const vineSexes = ["female", "male"] as const;
 export const vineStatuses = ["ok", "psa", "dead", "new", "unknown"] as const;
 
@@ -13,14 +14,12 @@ export const vineSchema = z.object({
   sex: z.enum(vineSexes),
   status: z.enum(vineStatuses),
   note: z.string().max(200),
-  x: fraction,
   y: fraction,
 });
 
 export const baySchema = z.object({
   id: z.string().min(1),
   lengthM: z.number().positive().max(50), // along the row
-  widthM: z.number().positive().max(20), // across the row
   vines: z.array(vineSchema),
 });
 
@@ -31,12 +30,41 @@ export const rowSchema = z.object({
   bays: z.array(baySchema),
 });
 
-export const layoutSchema = z.object({ rows: z.array(rowSchema) });
+export const layoutSchema = z.object({ rowSpacingM: z.number().positive().max(20), rows: z.array(rowSchema) });
 
 export type Vine = z.infer<typeof vineSchema>;
 export type Bay = z.infer<typeof baySchema>;
 export type Row = z.infer<typeof rowSchema>;
 export type Layout = z.infer<typeof layoutSchema>;
+
+// Before rows were post lines, a row was the strip between two post lines: each bay had a
+// width and vines down both sides (x < 0.5 on the left). Blocks saved then are still stored
+// that way until their next save.
+type LegacyLayout = {
+  rows: { id: string; name: string; offsetM: number; bays: { id: string; lengthM: number; widthM: number; vines: (Vine & { x: number })[] }[] }[];
+};
+export type StoredLayout = Layout | LegacyLayout;
+
+// Each side of a legacy strip becomes its own row, keeping every vine. Derived ids are
+// deterministic so an unsaved conversion keeps the same ids on every load.
+export function migrateLayout(layout: StoredLayout): Layout {
+  if ("rowSpacingM" in layout) return layout;
+  return {
+    rowSpacingM: layout.rows[0]?.bays[0]?.widthM ?? 4,
+    rows: layout.rows.flatMap((row) =>
+      (["left", "right"] as const).map((side) => ({
+        id: side === "left" ? row.id : `${row.id}-right`,
+        name: row.name && `${row.name} ${side}`,
+        offsetM: row.offsetM,
+        bays: row.bays.map((bay) => ({
+          id: side === "left" ? bay.id : `${bay.id}-right`,
+          lengthM: bay.lengthM,
+          vines: bay.vines.filter((v) => v.x < 0.5 === (side === "left")).map(({ x: _x, ...vine }) => vine),
+        })),
+      })),
+    ),
+  };
+}
 
 export const rowAlignments = ["top", "centre", "bottom"] as const;
 export type RowAlignment = (typeof rowAlignments)[number];
@@ -52,55 +80,89 @@ export function alignedRowOffset(lengthM: number, neighbour: Row | undefined, al
 
 export const newId = () => crypto.randomUUID();
 
-// Vines planted down each side of the bay, as in a typical T-bar/pergola block.
-export function makeBay(lengthM: number, widthM: number, vinesPerSide: number): Bay {
-  const vines: Vine[] = [];
-  for (const x of [0.15, 0.85]) {
-    for (let i = 0; i < vinesPerSide; i++) {
-      vines.push({ id: newId(), sex: "female", status: "ok", note: "", x, y: (i + 0.5) / vinesPerSide });
-    }
-  }
-  return { id: newId(), lengthM, widthM, vines };
+// Vines evenly spaced between the bay's two posts.
+export function makeBay(lengthM: number, vinesPerBay: number): Bay {
+  const vines: Vine[] = Array.from({ length: vinesPerBay }, (_, i) => ({
+    id: newId(),
+    sex: "female",
+    status: "ok",
+    note: "",
+    y: (i + 0.5) / vinesPerBay,
+  }));
+  return { id: newId(), lengthM, vines };
 }
 
-export function makeRow(name: string, offsetM: number, bayCount: number, lengthM: number, widthM: number, vinesPerSide: number): Row {
+export function makeRow(name: string, offsetM: number, bayCount: number, lengthM: number, vinesPerBay: number): Row {
   return {
     id: newId(),
     name,
     offsetM,
-    bays: Array.from({ length: bayCount }, () => makeBay(lengthM, widthM, vinesPerSide)),
+    bays: Array.from({ length: bayCount }, () => makeBay(lengthM, vinesPerBay)),
   };
 }
 
-export type BayGeometry = { row: Row; bay: Bay; x: number; y: number; w: number; h: number };
+const EPS = 1e-3; // metres; post positions closer than this are the same position
 
-// Lays rows side by side (x, across) and bays end to end (y, along the row), in metres.
+// A span is the stretch of one row between two neighbouring posts, holding that row's vines there.
+export type SpanGeometry = { row: Row; bay: Bay; index: number; lineX: number; y: number; h: number };
+// A bay is the cell between two neighbouring rows, with a post on each corner.
+export type BayGeometry = { left: SpanGeometry; right: SpanGeometry; x: number; y: number; w: number; h: number };
+
+// Pairs the spans of two neighbouring rows that have posts at the same two positions.
+export function pairSpans<T extends { y: number; h: number }>(left: T[], right: T[]): [T, T][] {
+  return left.flatMap((a) => {
+    const b = right.find((b) => Math.abs(b.y - a.y) < EPS && Math.abs(b.h - a.h) < EPS);
+    return b ? [[a, b] as [T, T]] : [];
+  });
+}
+
+// Lays rows of posts side by side rowSpacingM apart (x) and their spans end to end (y), in metres.
 export function layoutGeometry(layout: Layout) {
-  const rows: { row: Row; x: number; w: number; y: number; h: number }[] = [];
-  const bays: BayGeometry[] = [];
-  let x = 0;
+  const spacing = layout.rowSpacingM;
+  const rows: { row: Row; lineX: number; y: number; h: number; spans: SpanGeometry[] }[] = [];
   let maxY = 0;
+  layout.rows.forEach((row, i) => {
+    const lineX = (i + 0.5) * spacing;
+    let y = row.offsetM;
+    const spans = row.bays.map((bay, index) => {
+      const span = { row, bay, index, lineX, y, h: bay.lengthM };
+      y += bay.lengthM;
+      return span;
+    });
+    rows.push({ row, lineX, y: row.offsetM, h: y - row.offsetM, spans });
+    maxY = Math.max(maxY, y);
+  });
+  const bays: BayGeometry[] = rows.slice(1).flatMap((right, i) =>
+    pairSpans(rows[i].spans, right.spans).map(([l, r]) => ({ left: l, right: r, x: l.lineX, y: l.y, w: spacing, h: l.h })),
+  );
+  return { rows, spans: rows.flatMap((r) => r.spans), bays, width: layout.rows.length * spacing, height: maxY };
+}
+
+// Posts line up across the block, so a bay's length is the gap between two cross-lines of
+// posts: changing it moves every post below it, in every row, keeping the grid lined up.
+export function setBayLength(layout: Layout, startM: number, oldM: number, newM: number) {
+  const endM = startM + oldM;
   for (const row of layout.rows) {
-    const w = Math.max(1, ...row.bays.map((b) => b.widthM));
+    if (row.offsetM > endM - EPS) {
+      row.offsetM = Math.min(1000, Math.max(0, row.offsetM + newM - oldM));
+      continue;
+    }
     let y = row.offsetM;
     for (const bay of row.bays) {
-      bays.push({ row, bay, x, y, w: bay.widthM, h: bay.lengthM });
+      if (Math.abs(y - startM) < EPS && Math.abs(bay.lengthM - oldM) < EPS) {
+        bay.lengthM = newM;
+        break;
+      }
       y += bay.lengthM;
     }
-    rows.push({ row, x, w, y: row.offsetM, h: y - row.offsetM });
-    maxY = Math.max(maxY, y);
-    x += w;
   }
-  return { rows, bays, width: x, height: maxY };
 }
 
 export function layoutStats(layout: Layout) {
-  let bays = 0, female = 0, male = 0, areaM2 = 0;
+  let female = 0, male = 0;
   const status: Record<string, number> = {};
   for (const row of layout.rows) {
     for (const bay of row.bays) {
-      bays++;
-      areaM2 += bay.lengthM * bay.widthM;
       for (const v of bay.vines) {
         if (v.sex === "male") male++;
         else female++;
@@ -108,5 +170,7 @@ export function layoutStats(layout: Layout) {
       }
     }
   }
-  return { rows: layout.rows.length, bays, female, male, areaM2, status };
+  const { bays } = layoutGeometry(layout);
+  const areaM2 = bays.reduce((n, b) => n + b.w * b.h, 0);
+  return { rows: layout.rows.length, bays: bays.length, female, male, areaM2, status };
 }

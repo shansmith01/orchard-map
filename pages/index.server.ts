@@ -2,6 +2,7 @@ import { defineHandler, type InferProps } from "void";
 import { asc, db } from "void/db";
 import { blocks, orchards } from "@schema";
 import { z } from "zod";
+import { layoutGeometry, migrateLayout } from "../lib/layout";
 
 export type Props = InferProps<typeof loader>;
 
@@ -18,11 +19,14 @@ export const loader = defineHandler(async () => {
       ...o,
       blocks: blockRows
         .filter((b) => b.orchardId === o.id)
-        .map(({ layout, ...b }) => ({
-          ...b,
-          rowCount: layout.rows.length,
-          bayCount: layout.rows.reduce((n, r) => n + r.bays.length, 0),
-        })),
+        .map(({ layout: stored, ...b }) => {
+          const layout = migrateLayout(stored);
+          return {
+            ...b,
+            rowCount: layout.rows.length,
+            bayCount: layoutGeometry(layout).bays.length,
+          };
+        }),
     })),
   };
 });

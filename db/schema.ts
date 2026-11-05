@@ -1,6 +1,6 @@
 import { sql } from "void/db";
 import { integer, sqliteTable, text } from "void/schema-d1";
-import type { Layout } from "../lib/layout";
+import type { StoredLayout } from "../lib/layout";
 
 export const orchards = sqliteTable("orchards", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -14,6 +14,6 @@ export const blocks = sqliteTable("blocks", {
     .notNull()
     .references(() => orchards.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
-  layout: text("layout", { mode: "json" }).$type<Layout>().notNull().default({ rows: [] }),
+  layout: text("layout", { mode: "json" }).$type<StoredLayout>().notNull().default({ rows: [] }),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
