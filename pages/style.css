@@ -448,6 +448,30 @@ select {
 
 .segmented button {
   flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.segmented button > span {
+  text-box: trim-both cap alphabetic; /* centre the label's capitals in line with the hotkey badge */
+}
+
+.hotkey {
+  display: inline-block;
+  min-width: 16px;
+  padding: 3px;
+  box-sizing: border-box;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  text-align: center;
+  text-box: trim-both cap alphabetic; /* size the box to the capital, so equal padding centres it */
+  opacity: 0.55;
 }
 
 .wide {

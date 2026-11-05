@@ -9,6 +9,7 @@
     "postinstall": "void prepare"
   },
   "dependencies": {
+    "@tanstack/react-hotkeys": "^0.22.0",
     "hono": "^4.11.9",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

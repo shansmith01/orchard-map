@@ -1,4 +1,5 @@
 import { action } from "@void/react";
+import { useHotkeys } from "@tanstack/react-hotkeys";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   alignedRowOffset,
@@ -28,7 +29,7 @@ type Selection =
   | null;
 type View = { scale: number; tx: number; ty: number }; // pixels per metre + pan offset
 
-const TOOLS: { id: Tool; label: string; key: string }[] = [
+const TOOLS: { id: Tool; label: string; key: "V" | "F" | "M" | "E" }[] = [
   { id: "select", label: "Select / move", key: "V" },
   { id: "female", label: "Female vine", key: "F" },
   { id: "male", label: "Male vine", key: "M" },
@@ -131,29 +132,24 @@ export default function BlockEditor({ block, orchardName }: Props) {
     setSelection(null);
   }, [selection, edit]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const typing = e.target instanceof HTMLElement && e.target.closest("input, select, textarea");
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        void save();
-      } else if (typing) {
-        return;
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
-        e.preventDefault();
-        undo();
-      } else if (e.key === "Delete" || e.key === "Backspace") {
-        deleteSelection();
-      } else if (e.key === "Escape") {
-        setSelection(null);
-      } else {
-        const t = TOOLS.find((t) => t.key === e.key.toUpperCase());
-        if (t && !e.ctrlKey && !e.metaKey) setTool(t.id);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [save, undo, deleteSelection]);
+  // With vines selected, F and M set their sex; otherwise they pick the vine tool like V and E.
+  const vineIds = selectedVineIds(selection);
+  const setSelectedSex = (sex: Vine["sex"]) => {
+    const ids = new Set(vineIds);
+    edit((d) => forEachVine(d, (v) => ids.has(v.id) && (v.sex = sex)));
+  };
+
+  useHotkeys([
+    { hotkey: "Mod+S", callback: () => void save() },
+    { hotkey: "Mod+Z", callback: undo, options: { ignoreInputs: true } },
+    { hotkey: "Delete", callback: deleteSelection },
+    { hotkey: "Backspace", callback: deleteSelection },
+    { hotkey: "Escape", callback: () => setSelection(null), options: { ignoreInputs: true } },
+    ...TOOLS.map((t) => ({
+      hotkey: t.key,
+      callback: () => (vineIds.length > 0 && (t.id === "female" || t.id === "male") ? setSelectedSex(t.id) : setTool(t.id)),
+    })),
+  ]);
 
   // Auto-save shortly after the last change; each new change restarts the timer,
   // so a vine drag saves once when it ends. Retry an unchanged failed save more slowly.
@@ -762,8 +758,9 @@ function Inspector({
         </h3>
         <div className="segmented" role="group" aria-label="Sex">
           {(["female", "male"] as const).map((sex) => (
-            <button key={sex} aria-pressed={vine.sex === sex} onClick={() => set({ sex })}>
-              {sex === "female" ? "Female" : "Male"}
+            <button key={sex} aria-pressed={vine.sex === sex} aria-keyshortcuts={sex === "female" ? "F" : "M"} onClick={() => set({ sex })}>
+              <span>{sex === "female" ? "Female" : "Male"}</span>
+              <kbd className="hotkey" aria-hidden="true">{sex === "female" ? "F" : "M"}</kbd>
             </button>
           ))}
         </div>
@@ -936,8 +933,9 @@ function MultiVineInspector({
       </p>
       <div className="segmented" role="group" aria-label="Set sex for all">
         {(["female", "male"] as const).map((sex) => (
-          <button key={sex} aria-pressed={allSame("sex") === sex} onClick={() => set({ sex })}>
-            All {sex}
+          <button key={sex} aria-pressed={allSame("sex") === sex} aria-keyshortcuts={sex === "female" ? "F" : "M"} onClick={() => set({ sex })}>
+            <span>All {sex}</span>
+            <kbd className="hotkey" aria-hidden="true">{sex === "female" ? "F" : "M"}</kbd>
           </button>
         ))}
       </div>
