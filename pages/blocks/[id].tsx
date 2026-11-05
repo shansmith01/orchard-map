@@ -61,6 +61,27 @@ function vineSelection(layout: Layout, vineIds: string[]): Selection {
   return null;
 }
 
+// The nearest vine from `vineId` in direction (dx, dy), preferring vines in line with it over ones off to the side.
+function vineInDirection(layout: Layout, vineId: string, dx: number, dy: number): Selection {
+  const points = layoutGeometry(layout).bays.flatMap(({ row, bay, x, y, w, h }) =>
+    bay.vines.map((v) => ({ rowId: row.id, bayId: bay.id, vineId: v.id, x: x + v.x * w, y: y + v.y * h })),
+  );
+  const from = points.find((p) => p.vineId === vineId);
+  if (!from) return null;
+  let best: Selection = null;
+  let bestScore = Infinity;
+  for (const p of points) {
+    const along = (p.x - from.x) * dx + (p.y - from.y) * dy;
+    const across = Math.abs((p.x - from.x) * dy - (p.y - from.y) * dx);
+    const score = along + 3 * across;
+    if (along > 0.01 && score < bestScore) {
+      bestScore = score;
+      best = { kind: "vine", rowId: p.rowId, bayId: p.bayId, vineId: p.vineId };
+    }
+  }
+  return best;
+}
+
 function forEachVine(layout: Layout, fn: (vine: Vine, bay: Bay) => void) {
   for (const row of layout.rows) for (const bay of row.bays) for (const vine of [...bay.vines]) fn(vine, bay);
 }
@@ -145,6 +166,14 @@ export default function BlockEditor({ block, orchardName }: Props) {
     { hotkey: "Delete", callback: deleteSelection },
     { hotkey: "Backspace", callback: deleteSelection },
     { hotkey: "Escape", callback: () => setSelection(null), options: { ignoreInputs: true } },
+    ...([["ArrowUp", 0, -1], ["ArrowDown", 0, 1], ["ArrowLeft", -1, 0], ["ArrowRight", 1, 0]] as const).map(([hotkey, dx, dy]) => ({
+      hotkey,
+      callback: () => {
+        const next = selection?.kind === "vine" && vineInDirection(layout, selection.vineId, dx, dy);
+        if (next) setSelection(next);
+      },
+      options: { enabled: selection?.kind === "vine" },
+    })),
     ...TOOLS.map((t) => ({
       hotkey: t.key,
       callback: () => (vineIds.length > 0 && (t.id === "female" || t.id === "male") ? setSelectedSex(t.id) : setTool(t.id)),
@@ -778,6 +807,7 @@ function Inspector({
           <span>Note</span>
           <input value={vine.note} maxLength={200} onChange={(e) => set({ note: e.target.value })} placeholder="e.g. graft, cut back" />
         </label>
+        <p className="muted small">Arrow keys move to the next vine.</p>
         <div className="actions">
           <button onClick={() => onSelect({ kind: "bay", rowId: row.id, bayId: bay.id })}>Select bay</button>
           <button className="danger" onClick={onDelete}>
