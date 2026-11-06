@@ -46,13 +46,15 @@ test("a legacy strip becomes one row per side, keeping every vine on its own sid
   };
   const layout = migrateLayout(legacy);
   assert.equal(layout.rowSpacingM, 3.5);
-  assert.deepEqual(layout.rows.map((r) => [r.id, r.name, r.offsetM]), [["r1", "Row 1 left", 6], ["r1-right", "Row 1 right", 6]]);
+  assert.deepEqual(layout.rows.map((r) => [r.id, r.name, r.offsetM]), [["r1", "Row 1", 6], ["r1-right", "Row 2", 6]]);
   const vineIds = layout.rows.map((r) => r.bays.map((b) => b.vines.map((v) => v.id)));
   assert.deepEqual(vineIds, [[["v2", "v3"], []], [["v1"], ["v4"]]]);
   assert.deepEqual(layout.rows[1].bays.map((b) => b.lengthM), [5, 7]);
   assert.deepEqual(layout.rows[1].bays[0].vines[0], { id: "v1", sex: "male", status: "ok", note: "", y: 0.25 });
   assert.equal(migrateLayout(layout), layout, "a converted layout is left alone");
   assert.deepEqual(migrateLayout(legacy), layout, "converting again gives the same ids");
+  const named = { ...layout, rows: [{ ...layout.rows[0], name: "Row 1 left" }, { ...layout.rows[1], name: "Row 1 right" }, { ...layout.rows[1], id: "r3", name: "North" }] };
+  assert.deepEqual(migrateLayout(named).rows.map((r) => r.name), ["Row 1", "Row 2", "North"], "earlier left/right names are renamed by position");
 });
 
 test("bays are the cells between neighbouring rows wherever both have posts at the same two positions", () => {

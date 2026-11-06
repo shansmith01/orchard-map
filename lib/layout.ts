@@ -45,25 +45,34 @@ type LegacyLayout = {
 };
 export type StoredLayout = Layout | LegacyLayout;
 
-// Each side of a legacy strip becomes its own row, keeping every vine. Derived ids are
-// deterministic so an unsaved conversion keeps the same ids on every load.
+// Each side of a legacy strip becomes its own row, keeping every vine, and rows are named
+// Row 1, Row 2… by position. Derived ids are deterministic so an unsaved conversion keeps
+// the same ids on every load.
 export function migrateLayout(layout: StoredLayout): Layout {
-  if ("rowSpacingM" in layout) return layout;
+  if ("rowSpacingM" in layout) return renameSplitRows(layout);
   return {
     rowSpacingM: layout.rows[0]?.bays[0]?.widthM ?? 4,
-    rows: layout.rows.flatMap((row) =>
-      (["left", "right"] as const).map((side) => ({
-        id: side === "left" ? row.id : `${row.id}-right`,
-        name: row.name && `${row.name} ${side}`,
-        offsetM: row.offsetM,
-        bays: row.bays.map((bay) => ({
-          id: side === "left" ? bay.id : `${bay.id}-right`,
-          lengthM: bay.lengthM,
-          vines: bay.vines.filter((v) => v.x < 0.5 === (side === "left")).map(({ x: _x, ...vine }) => vine),
+    rows: layout.rows
+      .flatMap((row) =>
+        (["left", "right"] as const).map((side) => ({
+          id: side === "left" ? row.id : `${row.id}-right`,
+          offsetM: row.offsetM,
+          bays: row.bays.map((bay) => ({
+            id: side === "left" ? bay.id : `${bay.id}-right`,
+            lengthM: bay.lengthM,
+            vines: bay.vines.filter((v) => v.x < 0.5 === (side === "left")).map(({ x: _x, ...vine }) => vine),
+          })),
         })),
-      })),
-    ),
+      )
+      .map((row, i) => ({ ...row, name: `Row ${i + 1}` })),
   };
+}
+
+// An earlier conversion named rows "Row 1 left", "Row 1 right"…; renames those by position.
+const SPLIT_NAME = /^Row \d+ (left|right)$/;
+function renameSplitRows(layout: Layout): Layout {
+  if (!layout.rows.some((r) => SPLIT_NAME.test(r.name))) return layout;
+  return { ...layout, rows: layout.rows.map((r, i) => (SPLIT_NAME.test(r.name) ? { ...r, name: `Row ${i + 1}` } : r)) };
 }
 
 export const rowAlignments = ["top", "centre", "bottom"] as const;
